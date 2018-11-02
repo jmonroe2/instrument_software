@@ -21,9 +21,28 @@ time_const_array = ["10 us", "30 us", "100 us", "300 us", "1 ms", "3 ms",\
                     "10 ks", "30 ks" ]
 global sense_array
 sense_array = ["2 nv", "5 nv", "10 nV", "20 nV", "50 nV", "100 nV", "200 nV", "500 nV",\
-   "2 uv", "5 uv", "10 uV", "20 uV", "50 uV", "100 uV", "200 uV", "500 uV",\
-   "2 mv", "5 mv", "10 mV", "20 mV", "50 mV", "100 mV", "200 mV", "500 mV",\
+   "1 uv", "2 uv", "5 uv", "10 uV", "20 uV", "50 uV", "100 uV", "200 uV", "500 uV",\
+   "1 mv", "2 mv", "5 mv", "10 mV", "20 mV", "50 mV", "100 mV", "200 mV", "500 mV",\
    "1 V"]
+
+def get_unitFul_number(in_str):
+    re_template = "(\d+)\s(\w{1,2})" # 1 or more numbers, white space, 1 or 2 chars
+    found = re.findall(re_template, in_str)
+    if len(found):
+        (num, units) = found[0]
+    else:
+        raise ValueError("No template matches found in '"+in_str+"'")
+    
+    units_dict = {'n':1E-9, 'u':1E-6, 'm':1E-3, 'k':1E3, 'M':1E6, 'G':1E9}
+    if len(units)>1:
+        scale_char = units[0]
+        scale = units_dict[scale_char]
+    else:
+        scale = 1
+        
+    return float(num)*scale
+##END get_unitFul_number
+
 
 def default_settings(srs_handler):
     '''
@@ -94,46 +113,82 @@ def default_settings(srs_handler):
     
     ## use grounded ground (vs floating)
     srs_handler.write("IGND 1")
-    
 ##END default_settings
 
-def get_data(srs_handler,dynamic=False,average_num=None):
-    if not dynamic:
-        if not average_num:
-            buffer = srs_handler.query("OUTP ? 1")
-            return float(buffer)
-        else:
-            time_const = 
-    else:
-        current
+
+def get_data(srs_handler,num_averages=None):
+    global time_const_array
+
+    ## collected data, averaged or not
+    if num_averages:
+        time_const_index = srs_handler.query("OFLT ?")
+        time_const_str = time_const_array[int(time_const_index)]
+        time_const = get_unitFul_number(time_const_str) # units: seconds
+        
+        ## reset data buffer
+        srs_handler.write("REST")
+        delay_time_sec = num_averages *time_const # units: seconds
+        #time.sleep(delay_time_sec) 
+        measurements = np.zeros(num_averages)
+        for i in range(num_averages):
+            m = srs_handler.query("OUTP ? 1")
+            measurements[i] =   float(m)  
+            time.sleep(time_const)
+        out = np.mean(measurements), np.std(measurements)
+        print(measurements)
+    else:        
+        buffer = srs_handler.query("OUTP ? 1")
+        out = float(buffer)
+    return out
+        
+        #print(time_const); return 0;
 ##END get_data
 
 
+def tune_sensitivity(srs_handler,timeOut = 10):
+    global sense_array    
+
+    num_attempts = 0
+    while num_attempts<timeOut:
+        current_sense_index = int(srs_handler.query("SENS ?"))
+        max_range = float(get_unitFul_number(sense_array[current_sense_index]))
+        min_range = float(get_unitFul_number(sense_array[current_sense_index-1]))
+        
+        ## check if current reading is in bounds
+        reading = float(srs_handler.query("OUTP ? 1"))
+        add = (np.sign(reading-max_range)+1)//2  # if read > max: add +1
+        sub = (np.sign(min_range-reading)+1)//2  # if read < min: subtract +1
+        srs_handler.write("SENS "+str(current_sense_index+add-sub))
+        num_attempts += 1
+        if not (add + sub): ## no change
+            break
+    if num_attempts>=timeOut:
+        print("Unable to tune sensitivity")
+    
+##END tune_sensitivity
+
+
 def main():
+    
     gpib_number = 8
     address = "GPIB0::"+str(gpib_number)+"::INSTR"
 
     ## start session with srs
     rm = pyvisa.ResourceManager()
     srs_instr = rm.open_resource(address)
-    ## setup srs for data collection
-    default_settings(srs_instr)
-    srs_instr.write("SENS 15")
-    
-    ## dynamically get data from srs
-    num = 20
-    xs = np.zeros(num)
-    for i in range(num):
-        if np.mod(i,10)==0: print(i)
-        time.sleep(0.3*3) # seconds
-        x = get_data(srs_instr, dynamic=False)    
-        xs[i] = x
-        
-    return xs*1E6
+    try:
+        ## setup srs for data collection
+        #default_settings(srs_instr)
+        tune_sensitivity(srs_instr)
+        return 0;
+        ## dynamically get data from srs
+        xs,noise = get_data(srs_instr, num_averages=10)
+            
+        return xs*1E6, noise*1E6
+    finally:
+        srs_instr.close()
 ##END main()
 
 if __name__ == '__main__':
     xs = main()
-    clipped = xs[10:]
-    print(np.round(np.mean(clipped),1), "+/-", np.std(clipped) )
 
