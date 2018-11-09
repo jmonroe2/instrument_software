@@ -116,7 +116,7 @@ def default_settings(srs_handler):
 ##END default_settings
 
 
-def get_data(srs_handler,num_averages=None):
+def get_data(srs_handler,num_averages=None,num_discard=0,return_all=False):
     global time_const_array
 
     ## collected data, averaged or not
@@ -126,25 +126,29 @@ def get_data(srs_handler,num_averages=None):
         time_const = get_unitFul_number(time_const_str) # units: seconds
         
         ## reset data buffer
-        srs_handler.write("REST")
         delay_time_sec = num_averages *time_const # units: seconds
         #time.sleep(delay_time_sec) 
         measurements = np.zeros(num_averages)
+        srs_handler.write("REST")
+        time.sleep(num_discard*time_const)
         for i in range(num_averages):
             m = srs_handler.query("OUTP ? 1")
             measurements[i] =   float(m)  
             time.sleep(time_const)
         out = np.mean(measurements), np.std(measurements)
-        print(measurements)
     else:        
         buffer = srs_handler.query("OUTP ? 1")
         out = float(buffer)
-    return out
+  
+    if return_all:
+        return out, measurements
+    else:
+        return out
         
         #print(time_const); return 0;
 ##END get_data
 
-
+        
 def tune_sensitivity(srs_handler,timeOut = 10):
     global sense_array    
 
@@ -179,16 +183,25 @@ def main():
     try:
         ## setup srs for data collection
         #default_settings(srs_instr)
-        tune_sensitivity(srs_instr)
-        return 0;
-        ## dynamically get data from srs
-        xs,noise = get_data(srs_instr, num_averages=10)
+        #       tune_sensitivity(srs_instr)
             
-        return xs*1E6, noise*1E6
+        ## dynamically get data from srs
+        (voltage, std_err), ms = get_data(srs_instr, \
+                    num_averages=8, num_discard=4, return_all=True)
+        ## units: volts
+        voltage *= 1E6
+        std_err *= 1E6
+        if std_err <1:
+            print(np.round(voltage,1), "+/-", std_err, " uV")
+        else:
+            print("Noisy measurement",voltage, "+/-", std_err )
+        return ms*1E6 ## units volts
     finally:
         srs_instr.close()
 ##END main()
 
 if __name__ == '__main__':
-    xs = main()
+    ms = main()
+    #plt.clf()
+    #plt.plot(ms)
 
